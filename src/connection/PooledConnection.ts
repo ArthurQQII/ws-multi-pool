@@ -1,0 +1,266 @@
+import { WebSocket } from 'ws';
+import type { RawData } from 'ws';
+import { ExponentialBackoff } from '../utils/ExponentialBackoff.js';
+import { TypedEventEmitter } from '../utils/TypedEventEmitter.js';
+import type { ConnectionEvents, ResolvedPoolOptions, SendCallback, SendData } from '../types/index.js';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'open'
+  | 'closing'
+  | 'closed'
+  | 'destroyed';
+
+// ---------------------------------------------------------------------------
+// Class
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps a single WebSocket connection with automatic reconnection, exponential
+ * backoff, and an optional heartbeat mechanism.
+ *
+ * Consumers should not instantiate this class directly; use {@link WebSocketPool}
+ * instead.
+ */
+export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
+  public readonly id: number;
+
+  private ws: WebSocket | null = null;
+  private state: ConnectionState = 'idle';
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private pongHandler: (() => void) | null = null;
+  private readonly backoff: ExponentialBackoff;
+  private readonly options: ResolvedPoolOptions;
+
+  constructor(
+    private readonly url: string,
+    id: number,
+    options: ResolvedPoolOptions,
+  ) {
+    super();
+    this.id = id;
+    this.options = options;
+    this.backoff = new ExponentialBackoff(
+      options.reconnectInterval,
+      options.maxReconnectInterval,
+      options.reconnectBackoffMultiplier,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  /** `true` when the underlying socket is in the OPEN state. */
+  get isOpen(): boolean {
+    return this.state === 'open';
+  }
+
+  /** Current `readyState` of the underlying WebSocket, or `CLOSED` if none exists. */
+  get readyState(): number {
+    return this.ws?.readyState ?? WebSocket.CLOSED;
+  }
+
+  /** Current lifecycle state of this connection. */
+  get connectionState(): ConnectionState {
+    return this.state;
+  }
+
+  /**
+   * Creates and connects the underlying WebSocket.  Safe to call when already
+   * connecting or open – the call is a no-op in those cases.
+   */
+  connect(): void {
+    if (this.state === 'destroyed' || this.state === 'connecting' || this.state === 'open') {
+      return;
+    }
+
+    this.state = 'connecting';
+    this.options.logger.debug(`Connection #${this.id}: connecting to ${this.url}`);
+
+    try {
+      this.ws = this.options.wsFactory(this.url, this.options.wsOptions);
+      this._attachHandlers();
+    } catch (err) {
+      this.state = 'closed';
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.options.logger.error(`Connection #${this.id}: failed to create socket`, error.message);
+      this.emit('error', error, this.id);
+      this._scheduleReconnect();
+    }
+  }
+
+  /**
+   * Sends data on this connection.
+   * Calls `callback` with an `Error` if the connection is not open.
+   */
+  send(data: SendData, callback?: SendCallback): void {
+    if (!this.ws || this.state !== 'open') {
+      callback?.(new Error(`Connection #${this.id} is not open (state: ${this.state})`));
+      return;
+    }
+    this.ws.send(data, callback as (err?: Error) => void);
+  }
+
+  /**
+   * Gracefully closes the connection and resolves once the socket has closed.
+   * Reconnection is suppressed.
+   */
+  close(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (this.state === 'destroyed') {
+        resolve();
+        return;
+      }
+
+      this._clearTimers();
+
+      if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+        this.state = 'closed';
+        resolve();
+        return;
+      }
+
+      this.state = 'closing';
+      this.ws.once('close', () => {
+        this.state = 'closed';
+        resolve();
+      });
+      this.ws.close();
+    });
+  }
+
+  /**
+   * Immediately terminates the connection and disables all reconnect logic.
+   * No further events will be emitted after this call.
+   */
+  destroy(): void {
+    this.state = 'destroyed';
+    this._clearTimers();
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      this.ws.terminate();
+      this.ws = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  private _attachHandlers(): void {
+    if (!this.ws) return;
+
+    this.ws.on('open', () => {
+      this.state = 'open';
+      this.backoff.reset();
+      this.options.logger.info(`Connection #${this.id}: open`);
+      this._startHeartbeat();
+      this.emit('open', this.id);
+    });
+
+    this.ws.on('message', (data: RawData, isBinary: boolean) => {
+      this.emit('message', data, isBinary, this.id);
+    });
+
+    this.ws.on('close', (code: number, reason: Buffer) => {
+      this._stopHeartbeat();
+
+      if (this.state === 'closing' || this.state === 'destroyed') {
+        this.state = 'closed';
+        this.emit('close', this.id, code, reason);
+        return;
+      }
+
+      this.state = 'closed';
+      this.options.logger.warn(
+        `Connection #${this.id}: closed (code=${code}). Scheduling reconnect.`,
+      );
+      this.emit('close', this.id, code, reason);
+      this._scheduleReconnect();
+    });
+
+    this.ws.on('error', (err: Error) => {
+      this.options.logger.error(`Connection #${this.id}: error – ${err.message}`);
+      this.emit('error', err, this.id);
+    });
+  }
+
+  private _scheduleReconnect(): void {
+    if (this.state === 'destroyed') return;
+    this._clearReconnectTimer();
+
+    const delay = this.backoff.next();
+    this.options.logger.debug(
+      `Connection #${this.id}: reconnecting in ${Math.round(delay)}ms ` +
+        `(attempt #${this.backoff.attempts})`,
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private _startHeartbeat(): void {
+    const { heartbeatInterval, heartbeatTimeout } = this.options;
+    if (heartbeatInterval <= 0) return;
+
+    this._stopHeartbeat(); // Clear any stale timers from a previous connection.
+
+    this.pongHandler = () => {
+      if (this.heartbeatTimeoutTimer !== null) {
+        clearTimeout(this.heartbeatTimeoutTimer);
+        this.heartbeatTimeoutTimer = null;
+      }
+    };
+    this.ws?.on('pong', this.pongHandler);
+
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.ws || this.state !== 'open') return;
+
+      this.ws.ping();
+
+      this.heartbeatTimeoutTimer = setTimeout(() => {
+        this.options.logger.warn(
+          `Connection #${this.id}: heartbeat timeout after ${heartbeatTimeout}ms – terminating`,
+        );
+        this.ws?.terminate();
+      }, heartbeatTimeout);
+    }, heartbeatInterval);
+  }
+
+  private _stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.heartbeatTimeoutTimer !== null) {
+      clearTimeout(this.heartbeatTimeoutTimer);
+      this.heartbeatTimeoutTimer = null;
+    }
+    if (this.pongHandler !== null && this.ws !== null) {
+      this.ws.off('pong', this.pongHandler);
+      this.pongHandler = null;
+    }
+  }
+
+  private _clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private _clearTimers(): void {
+    this._clearReconnectTimer();
+    this._stopHeartbeat();
+  }
+}
