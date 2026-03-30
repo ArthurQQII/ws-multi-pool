@@ -46,8 +46,8 @@
     "round-robin",
     "connection-pool"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Arthur Qi",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ArthurQQII/ws-multi-pool.git"

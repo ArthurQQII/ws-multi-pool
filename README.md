@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/ArthurQQII/ws-multi-pool/actions/workflows/ci.yml/badge.svg)](https://github.com/ArthurQQII/ws-multi-pool/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/ws-multi-pool.svg)](https://www.npmjs.com/package/ws-multi-pool)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ## Why?
 
@@ -254,4 +254,4 @@ pnpm test:coverage
 
 ## License
 
-[ISC](LICENSE)
+[MIT](LICENSE)
