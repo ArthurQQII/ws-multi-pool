@@ -1,6 +1,6 @@
 {
   "name": "ws-multi-pool",
-  "version": "1.0.0",
+  "version": "0.0.2",
   "description": "High-performance multiplexed WebSocket connection pool for Node.js",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -17,7 +17,9 @@
       }
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -34,7 +36,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "publish:public": "pnpm publish --no-git-checks --access public"
   },
   "keywords": [
     "websocket",
