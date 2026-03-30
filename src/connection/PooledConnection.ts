@@ -2,7 +2,8 @@ import { WebSocket } from 'ws';
 import type { RawData } from 'ws';
 import { ExponentialBackoff } from '../utils/ExponentialBackoff.js';
 import { TypedEventEmitter } from '../utils/TypedEventEmitter.js';
-import type { ConnectionEvents, ResolvedPoolOptions, SendCallback, SendData } from '../types/index.js';
+import type { IncomingMessage, ClientRequest } from 'http';
+import type { ConnectionEvents, ResolvedPoolOptions, SendCallback, SendData, SendOptions } from '../types/index.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -101,12 +102,34 @@ export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
    * Sends data on this connection.
    * Calls `callback` with an `Error` if the connection is not open.
    */
-  send(data: SendData, callback?: SendCallback): void {
+  send(data: SendData, cb?: SendCallback): void;
+  send(data: SendData, options: SendOptions, cb?: SendCallback): void;
+  send(data: SendData, optionsOrCallback?: SendOptions | SendCallback, callback?: SendCallback): void {
     if (!this.ws || this.state !== 'open') {
-      callback?.(new Error(`Connection #${this.id} is not open (state: ${this.state})`));
+      const err = new Error(`Connection #${this.id} is not open (state: ${this.state})`);
+      if (typeof optionsOrCallback === 'function') optionsOrCallback(err);
+      else callback?.(err);
       return;
     }
-    this.ws.send(data, callback as (err?: Error) => void);
+
+    if (typeof optionsOrCallback === 'function') {
+      this.ws.send(data, optionsOrCallback as (err?: Error) => void);
+    } else if (optionsOrCallback !== undefined) {
+      this.ws.send(data, optionsOrCallback, callback as (err?: Error) => void);
+    } else {
+      this.ws.send(data);
+    }
+  }
+
+  /**
+   * Sends a ping frame on this connection.
+   */
+  ping(data?: SendData, mask?: boolean, cb?: (err: Error) => void): void {
+    if (!this.ws || this.state !== 'open') {
+      cb?.(new Error(`Connection #${this.id} is not open (state: ${this.state})`));
+      return;
+    }
+    this.ws.ping(data, mask, cb);
   }
 
   /**
@@ -168,6 +191,22 @@ export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
 
     this.ws.on('message', (data: RawData, isBinary: boolean) => {
       this.emit('message', data, isBinary, this.id);
+    });
+
+    this.ws.on('unexpected-response', (request: ClientRequest, response: IncomingMessage) => {
+      this.emit('unexpected-response', request, response, this.id);
+    });
+
+    this.ws.on('upgrade', (response: IncomingMessage) => {
+      this.emit('upgrade', response, this.id);
+    });
+
+    this.ws.on('ping', (data: Buffer) => {
+      this.emit('ping', data, this.id);
+    });
+
+    this.ws.on('pong', (data: Buffer) => {
+      this.emit('pong', data, this.id);
     });
 
     this.ws.on('close', (code: number, reason: Buffer) => {

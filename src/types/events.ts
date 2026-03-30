@@ -1,4 +1,5 @@
 import type { RawData } from 'ws';
+import type { IncomingMessage, ClientRequest } from 'http';
 
 export interface PoolEvents extends Record<string, unknown[]> {
   /** Emitted when a pooled connection opens. */
@@ -15,6 +16,14 @@ export interface PoolEvents extends Record<string, unknown[]> {
   'pool:ready': [];
   /** Emitted when every connection in the pool is closed. */
   'pool:empty': [];
+  /** Emitted when the server rejects the HTTP handshake. */
+  'unexpected-response': [request: ClientRequest, response: IncomingMessage, connectionId: number];
+  /** Emitted when the server accepts the HTTP handshake. */
+  upgrade: [response: IncomingMessage, connectionId: number];
+  /** Emitted when the server sends a raw ping frame. */
+  ping: [data: Buffer, connectionId: number];
+  /** Emitted when the server sends a raw pong frame. */
+  pong: [data: Buffer, connectionId: number];
 }
 
 export interface ConnectionEvents extends Record<string, unknown[]> {
@@ -22,4 +31,8 @@ export interface ConnectionEvents extends Record<string, unknown[]> {
   close: [connectionId: number, code: number, reason: Buffer];
   error: [error: Error, connectionId: number];
   message: [data: RawData, isBinary: boolean, connectionId: number];
+  'unexpected-response': [request: ClientRequest, response: IncomingMessage, connectionId: number];
+  upgrade: [response: IncomingMessage, connectionId: number];
+  ping: [data: Buffer, connectionId: number];
+  pong: [data: Buffer, connectionId: number];
 }

@@ -1,4 +1,5 @@
 import type { RawData } from 'ws';
+import type { IncomingMessage, ClientRequest } from 'http';
 import { PooledConnection } from '../connection/PooledConnection.js';
 import { TypedEventEmitter } from '../utils/TypedEventEmitter.js';
 import { resolveOptions } from './defaults.js';
@@ -10,6 +11,7 @@ import type {
   ResolvedPoolOptions,
   SendCallback,
   SendData,
+  SendOptions,
 } from '../types/index.js';
 
 /**
@@ -89,19 +91,32 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
    *
    * Pass a `callback` to be notified of send errors.
    */
-  send(data: SendData, callback?: SendCallback): void {
+  send(data: SendData, cb?: SendCallback): void;
+  send(data: SendData, options: SendOptions, cb?: SendCallback): void;
+  send(data: SendData, optionsOrCallback?: SendOptions | SendCallback, callback?: SendCallback): void {
     if (this.isDestroyed) {
-      callback?.(new Error('Pool has been destroyed'));
+      const err = new Error('Pool has been destroyed');
+      if (typeof optionsOrCallback === 'function') optionsOrCallback(err);
+      else callback?.(err);
       return;
     }
 
     const connection = this._nextOpenConnection();
     if (connection) {
-      connection.send(data, callback);
+      if (typeof optionsOrCallback === 'function') {
+        connection.send(data, optionsOrCallback);
+      } else if (optionsOrCallback !== undefined) {
+        connection.send(data, optionsOrCallback, callback);
+      } else {
+        connection.send(data);
+      }
       return;
     }
 
-    this._enqueue({ data, callback });
+    const options = typeof optionsOrCallback !== 'function' ? optionsOrCallback : undefined;
+    const cb = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+
+    this._enqueue({ data, options, callback: cb });
   }
 
   /**
@@ -109,13 +124,56 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
    * `Promise.allSettled` result so callers can inspect per-connection
    * outcomes.
    */
-  broadcast(data: SendData): Promise<PromiseSettledResult<void>[]> {
+  broadcast(data: SendData, options?: SendOptions): Promise<PromiseSettledResult<void>[]> {
     const openConns = this.connections.filter((c) => c.isOpen);
     return Promise.allSettled(
       openConns.map(
         (c) =>
           new Promise<void>((resolve, reject) => {
-            c.send(data, (err) => (err ? reject(err) : resolve()));
+            const cb = (err?: Error): void => {
+              if (err) reject(err);
+              else resolve();
+            };
+            if (options) {
+              c.send(data, options, cb);
+            } else {
+              c.send(data, cb);
+            }
+          }),
+      ),
+    );
+  }
+
+  /**
+   * Sends a ping frame on the next available open connection using round-robin.
+   * If no connections are open, passes an error to the callback synchronously directly.
+   */
+  ping(data?: SendData, mask?: boolean, cb?: (err?: Error) => void): void {
+    if (this.isDestroyed) {
+      cb?.(new Error('Pool has been destroyed'));
+      return;
+    }
+    const connection = this._nextOpenConnection();
+    if (connection) {
+      connection.ping(data, mask, cb as undefined | ((err: Error) => void));
+      return;
+    }
+    cb?.(new Error('No open connections to ping'));
+  }
+
+  /**
+   * Sends a ping frame to **all** currently open connections.
+   */
+  broadcastPing(data?: SendData, mask?: boolean): Promise<PromiseSettledResult<void>[]> {
+    const openConns = this.connections.filter((c) => c.isOpen);
+    return Promise.allSettled(
+      openConns.map(
+        (c) =>
+          new Promise<void>((resolve, reject) => {
+            c.ping(data, mask, (err?: Error): void => {
+              if (err) reject(err);
+              else resolve();
+            });
           }),
       ),
     );
@@ -198,6 +256,22 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
       conn.on('message', (data: RawData, isBinary: boolean, id: number) => {
         this.emit('message', data, isBinary, id);
       });
+
+      conn.on('unexpected-response', (request: ClientRequest, response: IncomingMessage, id: number) => {
+        this.emit('unexpected-response', request, response, id);
+      });
+
+      conn.on('upgrade', (response: IncomingMessage, id: number) => {
+        this.emit('upgrade', response, id);
+      });
+
+      conn.on('ping', (data: Buffer, id: number) => {
+        this.emit('ping', data, id);
+      });
+
+      conn.on('pong', (data: Buffer, id: number) => {
+        this.emit('pong', data, id);
+      });
     }
   }
 
@@ -257,7 +331,11 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
         this.messageQueue.unshift(...pending.slice(sent));
         break;
       }
-      conn.send(msg.data, msg.callback);
+      if (msg.options) {
+        conn.send(msg.data, msg.options, msg.callback);
+      } else {
+        conn.send(msg.data, msg.callback);
+      }
       sent++;
     }
 

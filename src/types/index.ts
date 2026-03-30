@@ -1,4 +1,4 @@
-export type { SendData, SendCallback, QueuedMessage } from './send.js';
+export type { SendData, SendCallback, SendOptions, QueuedMessage } from './send.js';
 export type { Logger } from './logger.js';
 export type { WebSocketFactory } from './factory.js';
 export type { PoolOptions, ResolvedPoolOptions } from './options.js';

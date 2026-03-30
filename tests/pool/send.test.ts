@@ -60,6 +60,15 @@ describe('WebSocketPool – send', () => {
     expect(cb.mock.calls[0][0].message).toContain('destroyed');
   });
 
+  it('calls callback with error when pool is destroyed (with options)', () => {
+    const { pool } = makePool(2);
+    pool.destroy();
+    const cb = vi.fn();
+    pool.send('data', { binary: true }, cb);
+    expect(cb).toHaveBeenCalledWith(expect.any(Error));
+    expect(cb.mock.calls[0][0].message).toContain('destroyed');
+  });
+
   it('single open connection receives all messages', () => {
     const { pool, sockets } = makePool(3);
     sockets[2].simulateOpen(); // only connection #2 is open
@@ -82,11 +91,65 @@ describe('WebSocketPool – send', () => {
   it('passes send errors back via callback', () => {
     const { pool, sockets } = makePool(1);
     sockets[0].simulateOpen();
-    sockets[0].send.mockImplementationOnce((_d: unknown, cb?: (err?: Error) => void) => {
-      cb?.(new Error('write fail'));
+    sockets[0].send.mockImplementationOnce((_d: unknown, _opts: unknown, cb?: unknown) => {
+      // loosely determine if cb is the 2nd or 3rd arg
+      if (typeof _opts === 'function') _opts(new Error('write fail'));
+      else if (typeof cb === 'function') cb(new Error('write fail'));
     });
     const cb = vi.fn();
     pool.send('data', cb);
     expect(cb).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  // ---- Options -------------------------------------------------------------
+
+  it('passes options through to connection', () => {
+    const { pool, sockets } = makePool(1);
+    sockets[0].simulateOpen();
+    const cb = vi.fn();
+    const options = { binary: true };
+    pool.send('hello', options, cb);
+    expect(sockets[0].send).toHaveBeenCalledWith('hello', options, cb);
+  });
+
+  it('queues messages with their options if no connections open', () => {
+    const { pool, sockets } = makePool(1);
+    const cb = vi.fn();
+    const options = { compress: true };
+    pool.send('hello', options, cb);
+
+    sockets[0].simulateOpen();
+    expect(sockets[0].send).toHaveBeenCalledWith('hello', options, cb);
+  });
+
+  // ---- ping() --------------------------------------------------------------
+
+  it('ping() hits the next open connection', () => {
+    const { pool, sockets } = makePool(2);
+    openAll(sockets, 2);
+    
+    const cb = vi.fn();
+    pool.ping(Buffer.from('pool ping'), true, cb);
+    expect(sockets[0].ping).toHaveBeenCalledWith(Buffer.from('pool ping'), true, cb);
+    
+    pool.ping();
+    expect(sockets[1].ping).toHaveBeenCalledOnce();
+  });
+
+  it('ping() throws via callback if pool is destroyed', () => {
+    const { pool } = makePool(1);
+    pool.destroy();
+    const cb = vi.fn();
+    pool.ping(undefined, undefined, cb);
+    expect(cb).toHaveBeenCalledWith(expect.any(Error));
+    expect(cb.mock.calls[0][0].message).toContain('destroyed');
+  });
+
+  it('ping() throws via callback if no connections are open', () => {
+    const { pool } = makePool(1);
+    const cb = vi.fn();
+    pool.ping(undefined, undefined, cb);
+    expect(cb).toHaveBeenCalledWith(expect.any(Error));
+    expect(cb.mock.calls[0][0].message).toContain('No open connections to ping');
   });
 });

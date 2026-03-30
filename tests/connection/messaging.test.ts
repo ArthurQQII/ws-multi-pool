@@ -137,4 +137,86 @@ describe('PooledConnection – messaging', () => {
     sockets[0].simulateClose(1001, 'going away');
     expect(onClose).toHaveBeenCalledWith(0, 1001, expect.any(Buffer));
   });
+
+  // ---- Send Options --------------------------------------------------------
+
+  it('sends data with options and callback', () => {
+    const { conn, sockets } = makeConnection();
+    conn.connect();
+    sockets[0].simulateOpen();
+    const cb = vi.fn();
+    const options = { binary: true, compress: false };
+    conn.send('payload', options, cb);
+    expect(sockets[0].send).toHaveBeenCalledWith('payload', options, cb);
+  });
+
+  it('sends data with options only', () => {
+    const { conn, sockets } = makeConnection();
+    conn.connect();
+    sockets[0].simulateOpen();
+    const options = { fin: false };
+    conn.send('payload', options);
+    // Our mock mockWebSocket matches the specific argument count
+    expect(sockets[0].send).toHaveBeenCalledWith('payload', options, undefined);
+  });
+
+  // ---- ping() --------------------------------------------------------------
+
+  it('ping() calls native ping', () => {
+    const { conn, sockets } = makeConnection();
+    conn.connect();
+    sockets[0].simulateOpen();
+    const cb = vi.fn();
+    conn.ping(Buffer.from('data'), true, cb);
+    expect(sockets[0].ping).toHaveBeenCalledWith(Buffer.from('data'), true, cb);
+  });
+
+  it('ping() throws error via callback if not open', () => {
+    const { conn } = makeConnection();
+    const cb = vi.fn();
+    conn.ping(undefined, undefined, cb);
+    expect(cb).toHaveBeenCalledWith(expect.any(Error));
+    expect(cb.mock.calls[0][0].message).toContain('not open');
+  });
+
+  // ---- Extended native events ----------------------------------------------
+
+  it('emits unexpected-response with request, response, and id', () => {
+    const { conn, sockets } = makeConnection();
+    const onResponse = vi.fn();
+    conn.on('unexpected-response', onResponse);
+    conn.connect();
+    const req = { mockReq: true };
+    const res = { mockRes: true };
+    sockets[0].simulateUnexpectedResponse(req, res);
+    expect(onResponse).toHaveBeenCalledWith(req, res, 0);
+  });
+
+  it('emits upgrade with response and id', () => {
+    const { conn, sockets } = makeConnection();
+    const onUpgrade = vi.fn();
+    conn.on('upgrade', onUpgrade);
+    conn.connect();
+    const res = { mockRes: true };
+    sockets[0].simulateUpgrade(res);
+    expect(onUpgrade).toHaveBeenCalledWith(res, 0);
+  });
+
+  it('emits ping with data and id', () => {
+    const { conn, sockets } = makeConnection();
+    const onPing = vi.fn();
+    conn.on('ping', onPing);
+    conn.connect();
+    sockets[0].simulatePing(Buffer.from('hey'));
+    expect(onPing).toHaveBeenCalledWith(Buffer.from('hey'), 0);
+  });
+
+  it('emits pong with data and id', () => {
+    const { conn, sockets } = makeConnection();
+    const onPong = vi.fn();
+    conn.on('pong', onPong);
+    conn.connect();
+    sockets[0].simulatePong(Buffer.from('hey'));
+    expect(onPong).toHaveBeenCalledWith(Buffer.from('hey'), 0);
+  });
 });

@@ -132,4 +132,38 @@ describe('WebSocketPool – lifecycle', () => {
 
     expect(readyCalls).toHaveLength(2);
   });
+
+  // ---- Extended Native Events ----------------------------------------------
+
+  it('emits "unexpected-response" with request, response, connectionId', () => {
+    const { pool, sockets } = makePool(1);
+    const onResponse = vi.fn();
+    pool.on('unexpected-response', onResponse);
+    sockets[0].simulateUnexpectedResponse({ req: 1 }, { res: 1 });
+    expect(onResponse).toHaveBeenCalledWith({ req: 1 }, { res: 1 }, 0);
+  });
+
+  it('emits "upgrade" with response, connectionId', () => {
+    const { pool, sockets } = makePool(1);
+    const onUpgrade = vi.fn();
+    pool.on('upgrade', onUpgrade);
+    sockets[0].simulateUpgrade({ res: 1 });
+    expect(onUpgrade).toHaveBeenCalledWith({ res: 1 }, 0);
+  });
+
+  it('emits "ping" with data, connectionId', () => {
+    const { pool, sockets } = makePool(1);
+    const onPing = vi.fn();
+    pool.on('ping', onPing);
+    sockets[0].simulatePing(Buffer.from('hello'));
+    expect(onPing).toHaveBeenCalledWith(Buffer.from('hello'), 0);
+  });
+
+  it('emits "pong" with data, connectionId', () => {
+    const { pool, sockets } = makePool(1);
+    const onPong = vi.fn();
+    pool.on('pong', onPong);
+    sockets[0].simulatePong(Buffer.from('hello'));
+    expect(onPong).toHaveBeenCalledWith(Buffer.from('hello'), 0);
+  });
 });

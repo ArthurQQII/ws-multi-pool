@@ -16,8 +16,12 @@ export class MockWebSocket extends EventEmitter {
 
   readyState: number = MockWebSocket.CONNECTING;
 
-  readonly send = vi.fn((_data: unknown, callback?: (err?: Error) => void): void => {
-    callback?.();
+  readonly send = vi.fn((_data: unknown, optionsOrCallback?: unknown, callback?: unknown): void => {
+    if (typeof optionsOrCallback === 'function') {
+      optionsOrCallback();
+    } else if (typeof callback === 'function') {
+      callback();
+    }
   });
 
   readonly close = vi.fn((): void => {
@@ -36,8 +40,14 @@ export class MockWebSocket extends EventEmitter {
     this.emit('close', 1006, Buffer.from(''));
   });
 
-  readonly ping = vi.fn((): void => {
-    // no-op by default; tests can override per-instance
+  readonly ping = vi.fn((_data?: unknown, _mask?: unknown, callback?: unknown): void => {
+    // Tests can override or capture this; we invoke callback if provided.
+    // If mask is a function, it means (data, callback) was passed, but we'll loosely parse it.
+    if (typeof _mask === 'function') {
+      _mask();
+    } else if (typeof callback === 'function') {
+      callback();
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -66,9 +76,24 @@ export class MockWebSocket extends EventEmitter {
     this.emit('error', err);
   }
 
+  /** Fires the `unexpected-response` event. */
+  simulateUnexpectedResponse(request: unknown, response: unknown): void {
+    this.emit('unexpected-response', request, response);
+  }
+
+  /** Fires the `upgrade` event. */
+  simulateUpgrade(response: unknown): void {
+    this.emit('upgrade', response);
+  }
+
+  /** Fires the `ping` event. */
+  simulatePing(data: Buffer = Buffer.from('ping')): void {
+    this.emit('ping', data);
+  }
+
   /** Fires the `pong` event (simulates a server's response to a ping). */
-  simulatePong(): void {
-    this.emit('pong', Buffer.from(''));
+  simulatePong(data: Buffer = Buffer.from('pong')): void {
+    this.emit('pong', data);
   }
 }
 
