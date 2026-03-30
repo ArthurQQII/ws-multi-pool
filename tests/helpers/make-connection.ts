@@ -9,6 +9,7 @@ export function makeOptions(overrides: Partial<ResolvedPoolOptions> = {}): Resol
     reconnectInterval: 50,
     maxReconnectInterval: 500,
     reconnectBackoffMultiplier: 2,
+    maxReconnectAttempts: Infinity,
     heartbeatInterval: 0,
     heartbeatTimeout: 200,
     messageQueueSize: 10,
