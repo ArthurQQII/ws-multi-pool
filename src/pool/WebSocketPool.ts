@@ -165,6 +165,7 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
     for (const conn of this.connections) {
       conn.destroy();
     }
+    this.openCount = 0;
   }
 
   // ---------------------------------------------------------------------------

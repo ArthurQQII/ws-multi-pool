@@ -150,4 +150,34 @@ describe('PooledConnection – reconnect', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(conn.connectionState).toBe('closed');
   });
+
+  it('gives up and emits error after maxReconnectAttempts is reached', async () => {
+    const { conn, sockets } = makeConnection({
+      reconnectInterval: 50,
+      maxReconnectAttempts: 2,
+    });
+    const onError = vi.fn();
+    conn.on('error', onError);
+
+    // Initial connection -> fails
+    conn.connect();
+    expect(conn.connectionState).toBe('connecting');
+    sockets[0].simulateClose(1006);
+
+    // Reconnect attempt 1 -> fails
+    await vi.advanceTimersByTimeAsync(100);
+    expect(conn.connectionState).toBe('connecting');
+    sockets[1].simulateClose(1006);
+
+    // Reconnect attempt 2 -> fails
+    await vi.advanceTimersByTimeAsync(200);
+    expect(conn.connectionState).toBe('connecting');
+    sockets[2].simulateClose(1006);
+
+    // After attempt 2 fails, scheduleReconnect checks backoff.attempts >= 2
+    // It should immediately destroy itself and emit a fatal error.
+    expect(conn.connectionState).toBe('destroyed');
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError.mock.calls[0][0].message).toMatch(/reached max reconnect attempts/);
+  });
 });

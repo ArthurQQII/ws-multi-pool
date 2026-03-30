@@ -128,4 +128,24 @@ describe('WebSocketPool – message queue', () => {
     sockets[0].simulateOpen();
     expect(order).toEqual([1, 2, 3]);
   });
+
+  it('stops flushing and requeues remainder if connections close mid-flush', () => {
+    const { pool, sockets } = makePool(1);
+    
+    // First message callback simulates a sudden network close
+    pool.send('a', () => {
+      sockets[0].simulateClose(1006);
+    });
+    pool.send('b');
+    pool.send('c');
+
+    expect(pool.getStats().queuedMessages).toBe(3);
+
+    // Triggers _flushQueue
+    sockets[0].simulateOpen();
+
+    // 'a' is sent, callback fires synchronously in our mock, closing the socket.
+    // Loop tries to send 'b', discovers no open connections, and requeues 'b' and 'c'.
+    expect(pool.getStats().queuedMessages).toBe(2);
+  });
 });

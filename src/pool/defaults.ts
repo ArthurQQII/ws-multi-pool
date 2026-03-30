@@ -7,6 +7,7 @@ export const POOL_DEFAULTS = {
   reconnectInterval: 1_000,
   maxReconnectInterval: 30_000,
   reconnectBackoffMultiplier: 2,
+  maxReconnectAttempts: Infinity,
   heartbeatInterval: 0,
   heartbeatTimeout: 5_000,
   messageQueueSize: 100,
@@ -27,6 +28,7 @@ export function resolveOptions(opts: PoolOptions): ResolvedPoolOptions {
     maxReconnectInterval: opts.maxReconnectInterval ?? POOL_DEFAULTS.maxReconnectInterval,
     reconnectBackoffMultiplier:
       opts.reconnectBackoffMultiplier ?? POOL_DEFAULTS.reconnectBackoffMultiplier,
+    maxReconnectAttempts: opts.maxReconnectAttempts ?? POOL_DEFAULTS.maxReconnectAttempts,
     heartbeatInterval: opts.heartbeatInterval ?? POOL_DEFAULTS.heartbeatInterval,
     heartbeatTimeout: opts.heartbeatTimeout ?? POOL_DEFAULTS.heartbeatTimeout,
     messageQueueSize: opts.messageQueueSize ?? POOL_DEFAULTS.messageQueueSize,

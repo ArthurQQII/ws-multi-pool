@@ -197,6 +197,15 @@ export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
     if (this.state === 'destroyed') return;
     this._clearReconnectTimer();
 
+    if (this.backoff.attempts >= this.options.maxReconnectAttempts) {
+      this.options.logger.error(
+        `Connection #${this.id}: reached max reconnect attempts (${this.options.maxReconnectAttempts}) – giving up`,
+      );
+      this.destroy();
+      this.emit('error', new Error(`Connection #${this.id} reached max reconnect attempts`), this.id);
+      return;
+    }
+
     const delay = this.backoff.next();
     this.options.logger.debug(
       `Connection #${this.id}: reconnecting in ${Math.round(delay)}ms ` +

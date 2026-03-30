@@ -15,6 +15,9 @@ export interface PoolOptions {
   /** Exponential backoff multiplier applied to reconnect delay. @default 2 */
   reconnectBackoffMultiplier?: number;
 
+  /** Maximum consecutive reconnect attempts before giving up. @default Infinity */
+  maxReconnectAttempts?: number;
+
   /** Interval between heartbeat pings in ms. Set to 0 to disable. @default 0 */
   heartbeatInterval?: number;
 
@@ -41,6 +44,7 @@ export interface ResolvedPoolOptions {
   reconnectInterval: number;
   maxReconnectInterval: number;
   reconnectBackoffMultiplier: number;
+  maxReconnectAttempts: number;
   heartbeatInterval: number;
   heartbeatTimeout: number;
   messageQueueSize: number;
