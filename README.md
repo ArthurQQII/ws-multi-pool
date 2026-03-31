@@ -164,6 +164,336 @@ pool.on('unexpected-response', (req, res, id) => console.log('Auth check failed 
 pool.on('pool:ready', () => console.log('All connections scaled and linked'));
 ```
 
+## Migrating from `websocket` (WebSocket-Node)
+
+This section walks through replacing [`websocket`](https://www.npmjs.com/package/websocket)'s `WebSocketClient` with `ws-multi-pool` step by step.
+
+### Step 1 — Add the dependency
+
+> **Note:** If you are only replacing the outbound `WebSocketClient` (e.g. in a proxy that still uses `WebSocketServer` from the `websocket` package), keep `websocket` installed and simply add `ws-multi-pool` alongside it.
+
+```bash
+# npm
+npm install ws-multi-pool
+
+# pnpm
+pnpm add ws-multi-pool
+
+# yarn
+yarn add ws-multi-pool
+```
+
+---
+
+### Step 2 — Replace the import and connection setup
+
+**Before**
+```js
+const WebSocketClient = require('websocket').client;
+
+const client = new WebSocketClient();
+client.connect('ws://backend:8080/path', ['my-protocol']);
+```
+
+**After**
+```js
+const { WebSocketPool } = require('ws-multi-pool');
+
+const pool = new WebSocketPool('ws://backend:8080/path', {
+  wsOptions: ['my-protocol'], // sub-protocols (optional)
+});
+```
+
+`WebSocketPool` connects automatically on construction. There is no separate `.connect()` call.
+
+---
+
+### Step 3 — Handle connection open / failure
+
+**Before**
+```js
+client.on('connect', (connection) => {
+  console.log('connected');
+});
+
+client.on('connectFailed', (err) => {
+  console.error('connection failed:', err);
+});
+```
+
+**After**
+```js
+pool.on('open', (connectionId) => {
+  console.log(`connection #${connectionId} opened`);
+});
+
+pool.on('error', (err, connectionId) => {
+  console.error(`connection #${connectionId} error:`, err);
+});
+
+// Optional: wait until every connection in the pool is up
+pool.on('pool:ready', () => {
+  console.log('all connections open');
+});
+```
+
+> **Note:** `ws-multi-pool` reconnects automatically after failures — you do not need to call `.connect()` again inside an error or close handler.
+
+---
+
+### Step 4 — Receive messages
+
+The `websocket` package wraps messages in an object with a `type` field. `ws-multi-pool` gives you the raw data and an `isBinary` flag instead.
+
+**Before**
+```js
+client.on('connect', (connection) => {
+  connection.on('message', (msg) => {
+    if (msg.type === 'utf8') {
+      console.log('text:', msg.utf8Data);
+    } else if (msg.type === 'binary') {
+      console.log('binary:', msg.binaryData);
+    }
+  });
+});
+```
+
+**After**
+```js
+pool.on('message', (data, isBinary, connectionId) => {
+  if (!isBinary) {
+    console.log('text:', data.toString());
+  } else {
+    console.log('binary:', data); // Buffer
+  }
+});
+```
+
+---
+
+### Step 5 — Send messages
+
+| `websocket` | `ws-multi-pool` |
+|---|---|
+| `connection.sendUTF('hello')` | `pool.send('hello')` |
+| `connection.sendBytes(buffer)` | `pool.send(buffer)` |
+| `connection.send(data)` | `pool.send(data)` |
+| `connection.sendUTF(str, cb)` | `pool.send(str, cb)` |
+| `connection.ping(data)` | `pool.ping(data)` |
+
+```js
+// Text
+pool.send(JSON.stringify({ type: 'subscribe', channel: 'trades' }));
+
+// Binary
+pool.send(Buffer.from([0x01, 0x02, 0x03]));
+
+// With error callback
+pool.send('hello', (err) => {
+  if (err) console.error('send failed:', err);
+});
+
+// With send options (compression, binary flag, etc.)
+pool.send(payload, { compress: true, binary: true });
+```
+
+---
+
+### Step 6 — Handle disconnection and close
+
+`ws-multi-pool` reconnects automatically — you normally don't need to handle `close` to reconnect. If you need to react to connection drops (e.g. to update metrics):
+
+**Before**
+```js
+client.on('connect', (connection) => {
+  connection.on('close', (code, reason) => {
+    console.log('closed:', code, reason);
+    // manually reconnect...
+    client.connect(url);
+  });
+});
+```
+
+**After**
+```js
+pool.on('close', (connectionId, code, reason) => {
+  console.log(`connection #${connectionId} closed:`, code, reason.toString());
+  // reconnection is automatic — no action needed
+});
+
+pool.on('pool:empty', () => {
+  console.log('all connections are down');
+});
+```
+
+To shut down intentionally:
+
+```js
+// Graceful (waits for close handshake)
+await pool.close();
+
+// Immediate
+pool.destroy();
+```
+
+---
+
+### Step 7 — Custom headers and TLS options
+
+**Before**
+```js
+const headers = { Authorization: 'Bearer token123' };
+const tlsOptions = { rejectUnauthorized: false };
+
+client.connect(url, [], null, headers, { tlsOptions });
+```
+
+**After**
+```js
+const pool = new WebSocketPool(url, {
+  wsOptions: {
+    headers: { Authorization: 'Bearer token123' },
+    rejectUnauthorized: false,
+  },
+});
+```
+
+All options in `wsOptions` are forwarded directly to the underlying [`ws`](https://github.com/websockets/ws) constructor as `ClientOptions`.
+
+---
+
+### Step 8 — Enable connection pooling (optional but recommended)
+
+The main reason to use `ws-multi-pool` over a plain single-connection client is the ability to run multiple parallel connections for higher throughput. Increase `poolSize` from the default of `1`:
+
+```js
+const pool = new WebSocketPool('ws://backend:8080', {
+  poolSize: 4, // 4 concurrent connections, round-robin send
+});
+```
+
+Traffic is automatically distributed across all open connections. If one drops it reconnects in the background while the other three continue serving traffic.
+
+---
+
+### Step 9 — Built-in reconnect replaces manual retry logic
+
+A common pattern with `websocket` is to manually schedule reconnects:
+
+**Before**
+```js
+function connect() {
+  const client = new WebSocketClient();
+  client.on('connectFailed', () => setTimeout(connect, 2000));
+  client.on('connect', (conn) => {
+    conn.on('close', () => setTimeout(connect, 2000));
+  });
+  client.connect(url);
+}
+connect();
+```
+
+**After** — delete all of that. `ws-multi-pool` handles it:
+
+```js
+const pool = new WebSocketPool(url, {
+  reconnectInterval: 1_000,       // start at 1 s
+  maxReconnectInterval: 30_000,   // cap at 30 s
+  reconnectBackoffMultiplier: 2,  // double each attempt
+  maxReconnectAttempts: Infinity, // retry forever
+});
+```
+
+---
+
+### Complete before / after example
+
+**Before (`websocket`)**
+```js
+const WebSocketClient = require('websocket').client;
+
+const client = new WebSocketClient();
+let connection = null;
+
+function connect() {
+  client.connect('ws://backend:8080', [], null, {
+    Authorization: 'Bearer token123',
+  });
+}
+
+client.on('connect', (conn) => {
+  connection = conn;
+  console.log('connected');
+
+  conn.on('message', (msg) => {
+    if (msg.type === 'utf8') handleMessage(msg.utf8Data);
+  });
+
+  conn.on('close', () => {
+    connection = null;
+    console.log('disconnected, reconnecting…');
+    setTimeout(connect, 2000);
+  });
+
+  conn.on('error', (err) => {
+    console.error('error:', err);
+  });
+});
+
+client.on('connectFailed', (err) => {
+  console.error('connect failed:', err);
+  setTimeout(connect, 2000);
+});
+
+connect();
+
+function send(data) {
+  if (connection && connection.connected) {
+    connection.sendUTF(data);
+  }
+}
+```
+
+**After (`ws-multi-pool`)**
+```js
+const { WebSocketPool } = require('ws-multi-pool');
+
+const pool = new WebSocketPool('ws://backend:8080', {
+  wsOptions: { headers: { Authorization: 'Bearer token123' } },
+  reconnectInterval: 2_000,
+});
+
+pool.on('message', (data, isBinary) => {
+  if (!isBinary) handleMessage(data.toString());
+});
+
+pool.on('error', (err) => {
+  console.error('error:', err);
+});
+
+function send(data) {
+  pool.send(data);
+}
+```
+
+The 30-line manual reconnect loop collapses to a constructor option.
+
+---
+
+### Feature comparison
+
+| Feature | `websocket` client | `ws-multi-pool` |
+|---|---|---|
+| Multiple parallel connections | No | Yes (`poolSize`) |
+| Auto-reconnect | No — manual | Yes — built-in backoff |
+| Message queue during outage | No | Yes |
+| Heartbeat / keep-alive | No | Yes |
+| Custom headers / TLS | Yes (`connect()` args) | Yes (`wsOptions`) |
+| Sub-protocols | Yes (`connect()` arg) | Yes (`wsOptions`) |
+| Binary frames | Yes (`sendBytes`) | Yes (`pool.send(buffer)`) |
+| Send options (compress, mask) | No | Yes (`SendOptions`) |
+| Typed events (TypeScript) | No | Yes |
+
 ## Advanced Usage
 
 ### Custom Logger
