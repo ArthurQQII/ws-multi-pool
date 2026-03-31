@@ -115,6 +115,8 @@ export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
     if (typeof optionsOrCallback === 'function') {
       this.ws.send(data, optionsOrCallback as (err?: Error) => void);
     } else if (optionsOrCallback !== undefined) {
+      // Pass callback even when undefined so ws uses the 3-arg overload and
+      // honours the SendOptions (compress, binary, etc.).
       this.ws.send(data, optionsOrCallback, callback as (err?: Error) => void);
     } else {
       this.ws.send(data);
@@ -162,7 +164,7 @@ export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
 
   /**
    * Immediately terminates the connection and disables all reconnect logic.
-   * No further events will be emitted after this call.
+   * The connection cannot be reused after calling `destroy()`.
    */
   destroy(): void {
     this.state = 'destroyed';
@@ -240,8 +242,8 @@ export class PooledConnection extends TypedEventEmitter<ConnectionEvents> {
       this.options.logger.error(
         `Connection #${this.id}: reached max reconnect attempts (${this.options.maxReconnectAttempts}) – giving up`,
       );
-      this.destroy();
       this.emit('error', new Error(`Connection #${this.id} reached max reconnect attempts`), this.id);
+      this.destroy();
       return;
     }
 

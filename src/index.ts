@@ -16,8 +16,8 @@ export type {
   ConnectionEvents,
   Logger,
   SendData,
+  SendOptions,
   SendCallback,
   WebSocketFactory,
-  QueuedMessage,
 } from './types/index.js';
 export type { ConnectionState } from './connection/index.js';

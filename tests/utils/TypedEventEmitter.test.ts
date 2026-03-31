@@ -105,4 +105,12 @@ describe('TypedEventEmitter', () => {
     expect(emitter.off('data', handler)).toBe(emitter);
     expect(emitter.removeAllListeners('data')).toBe(emitter);
   });
+
+  it('addListener() behaves the same as on()', () => {
+    const emitter = new TypedEventEmitter<TestEvents>();
+    const handler = vi.fn();
+    emitter.addListener('data', handler);
+    emitter.emit('data', 'hello');
+    expect(handler).toHaveBeenCalledWith('hello');
+  });
 });

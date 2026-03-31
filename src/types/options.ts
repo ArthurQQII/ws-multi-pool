@@ -34,7 +34,9 @@ export interface PoolOptions {
   /** Custom WebSocket factory – useful for testing. @default `(url, opts) => new WebSocket(url, opts)` */
   wsFactory?: WebSocketFactory;
 
-  /** Extra options forwarded to the WebSocket constructor. */
+  /** Second argument forwarded to the `ws` WebSocket constructor.
+   *  Can be a subprotocol string / array (`string | string[]`) or a
+   *  `ClientOptions` object for TLS, headers, etc. */
   wsOptions?: ClientOptions | string | string[];
 }
 

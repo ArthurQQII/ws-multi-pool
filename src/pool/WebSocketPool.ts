@@ -87,7 +87,7 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
    * If no connection is currently open, the message is added to an internal
    * queue (up to {@link PoolOptions.messageQueueSize}) and will be sent once a
    * connection recovers.  If the queue is full the oldest pending message is
-   * silently dropped.
+   * dropped — its callback, if provided, is called with an error.
    *
    * Pass a `callback` to be notified of send errors.
    */
@@ -148,14 +148,14 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
    * Sends a ping frame on the next available open connection using round-robin.
    * If no connections are open, passes an error to the callback synchronously directly.
    */
-  ping(data?: SendData, mask?: boolean, cb?: (err?: Error) => void): void {
+  ping(data?: SendData, mask?: boolean, cb?: (err: Error) => void): void {
     if (this.isDestroyed) {
       cb?.(new Error('Pool has been destroyed'));
       return;
     }
     const connection = this._nextOpenConnection();
     if (connection) {
-      connection.ping(data, mask, cb as undefined | ((err: Error) => void));
+      connection.ping(data, mask, cb);
       return;
     }
     cb?.(new Error('No open connections to ping'));
@@ -170,7 +170,7 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
       openConns.map(
         (c) =>
           new Promise<void>((resolve, reject) => {
-            c.ping(data, mask, (err?: Error): void => {
+            c.ping(data, mask, (err: Error): void => {
               if (err) reject(err);
               else resolve();
             });
@@ -205,9 +205,11 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
 
   /**
    * Gracefully closes all connections and resolves once every socket has
-   * closed.  Queued messages are discarded.
+   * closed.  Queued messages are discarded.  The pool cannot be reused after
+   * calling `close()`.
    */
   async close(): Promise<void> {
+    this.isDestroyed = true;
     this.messageQueue.length = 0;
     await Promise.all(this.connections.map((c) => c.close()));
   }
@@ -328,7 +330,11 @@ export class WebSocketPool extends TypedEventEmitter<PoolEvents> {
     for (const msg of pending) {
       const conn = this._nextOpenConnection();
       if (!conn) {
-        this.messageQueue.unshift(...pending.slice(sent));
+        // Re-prepend unsent messages without spread to avoid call-stack overflow
+        // on pathological queue sizes.
+        for (let i = pending.length - 1; i >= sent; i--) {
+          this.messageQueue.unshift(pending[i]!);
+        }
         break;
       }
       if (msg.options) {

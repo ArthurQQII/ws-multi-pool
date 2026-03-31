@@ -23,6 +23,13 @@ export class TypedEventEmitter<TEvents extends Record<string, unknown[]>> extend
     return super.on(event, listener as (...args: unknown[]) => void);
   }
 
+  override addListener<K extends string & keyof TEvents>(
+    event: K,
+    listener: (...args: TEvents[K]) => void,
+  ): this {
+    return super.addListener(event, listener as (...args: unknown[]) => void);
+  }
+
   override once<K extends string & keyof TEvents>(
     event: K,
     listener: (...args: TEvents[K]) => void,

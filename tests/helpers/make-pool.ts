@@ -1,10 +1,11 @@
 import { WebSocketPool } from '../../src/pool/WebSocketPool.js';
+import type { PoolOptions } from '../../src/types/index.js';
 import { noopLogger } from '../../src/utils/logger.js';
 import { MockWebSocket, createMockFactory } from './MockWebSocket.js';
 
 export function makePool(
   poolSize: number,
-  extra: Record<string, unknown> = {},
+  extra: Partial<PoolOptions> = {},
 ): { pool: WebSocketPool; sockets: MockWebSocket[] } {
   const sockets = Array.from({ length: poolSize * 5 }, () => new MockWebSocket());
   const pool = new WebSocketPool('ws://test', {

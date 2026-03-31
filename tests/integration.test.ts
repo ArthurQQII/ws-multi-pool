@@ -221,6 +221,38 @@ describe('WebSocketPool – integration', () => {
     } finally { pool.destroy(); }
   });
 
+  // ---- maxReconnectAttempts ------------------------------------------------
+
+  it('gives up after maxReconnectAttempts and emits error', async () => {
+    const errors: Error[] = [];
+    // Use a port that will refuse connections after the first open/close cycle.
+    // Point pool at a valid server so it can connect once, then stop the server
+    // and let reconnects fail until the limit is reached.
+    const pool = new WebSocketPool(server.url, {
+      poolSize: 1,
+      reconnectInterval: 30,
+      maxReconnectInterval: 100,
+      maxReconnectAttempts: 2,
+      logger: false,
+    });
+    pool.on('error', (err) => errors.push(err));
+    try {
+      await waitFor(() => pool.openConnections === 1, 20, 3000);
+      // Stop the server so all reconnect attempts fail
+      await stopServer(server);
+      // Start a fresh server for afterEach cleanup (it will be unused)
+      server = await startServer();
+      await waitFor(
+        () => errors.some((e) => /max reconnect attempts/.test(e.message)),
+        50,
+        5000,
+      );
+      expect(errors.some((e) => /max reconnect attempts/.test(e.message))).toBe(true);
+    } finally {
+      pool.destroy();
+    }
+  });
+
   // ---- Large messages ------------------------------------------------------
 
   it('handles large messages', async () => {

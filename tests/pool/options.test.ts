@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WebSocketPool } from '../../src/pool/WebSocketPool.js';
 import { POOL_DEFAULTS } from '../../src/pool/defaults.js';
+import type { PoolOptions } from '../../src/types/index.js';
 import { noopLogger, createConsoleLogger } from '../../src/utils/logger.js';
 import { MockWebSocket, createMockFactory } from '../helpers/index.js';
 
@@ -8,7 +9,7 @@ describe('WebSocketPool – options', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  function make(opts: Record<string, unknown> = {}) {
+  function make(opts: Partial<PoolOptions> = {}) {
     const sockets = Array.from({ length: 20 }, () => new MockWebSocket());
     const base = {
       logger: noopLogger,
